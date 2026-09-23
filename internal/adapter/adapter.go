@@ -5,7 +5,7 @@ package adapter
 import (
 	"time"
 
-	"github.com/CHANGEME/spools/internal/bundle"
+	"github.com/cachebag/spools/internal/bundle"
 )
 
 type Session struct {
