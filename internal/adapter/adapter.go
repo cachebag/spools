@@ -26,10 +26,17 @@ type Adapter interface {
 
 	Export(id string) (*bundle.Bundle, error)
 
-	Import(b *bundle.Bundle, opts ImportOptions) error
+	Import(b *bundle.Bundle, opts ImportOptions) (*ImportResult, error)
 }
 
 type ImportOptions struct {
 	DryRun      bool
 	ProjectRoot string
+}
+
+type ImportResult struct {
+	ID          string
+	Title       string
+	ProjectRoot string // local path the thread was rebased onto
+	Replaced    bool   // a thread with this id already existed
 }
