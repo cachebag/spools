@@ -36,12 +36,8 @@ func Resolve(override, originRoot, originHome, gitRemote string) (string, error)
 	}
 
 	home, _ := os.UserHomeDir()
-	if originHome != "" && home != "" {
-		if rel, ok := strings.CutPrefix(originRoot, originHome); ok {
-			if p := filepath.Join(home, filepath.FromSlash(rel)); isDir(p) {
-				return p, nil
-			}
-		}
+	if p, ok := Rebase(originRoot, originHome, home); ok && isDir(p) {
+		return p, nil
 	}
 
 	if want := normalizeRemote(gitRemote); want != "" {
@@ -55,7 +51,11 @@ func Resolve(override, originRoot, originHome, gitRemote string) (string, error)
 					continue
 				}
 				p := filepath.Join(dir, e.Name())
-				if normalizeRemote(remoteOf(p)) == want {
+				// Skip non-repos without shelling out; git -C would walk up to a parent repo.
+				if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
+					continue
+				}
+				if normalizeRemote(Remote(p)) == want {
 					return p, nil
 				}
 			}
@@ -79,11 +79,29 @@ func searchDirs(home string) []string {
 	return out
 }
 
-func remoteOf(dir string) string {
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+// Rebase moves path from under fromHome to under toHome.
+func Rebase(path, fromHome, toHome string) (string, bool) {
+	if fromHome == "" || toHome == "" {
+		return "", false
+	}
+	rel, ok := strings.CutPrefix(path, fromHome)
+	if !ok || rel != "" && rel[0] != '/' && rel[0] != '\\' {
+		return "", false
+	}
+	return filepath.Join(toHome, filepath.FromSlash(rel)), true
+}
+
+// Remote returns dir's origin remote URL, or "" if there isn't one.
+func Remote(dir string) string { return git(dir, "remote", "get-url", "origin") }
+
+// Branch returns dir's current branch, or "" if it isn't a repo.
+func Branch(dir string) string { return git(dir, "rev-parse", "--abbrev-ref", "HEAD") }
+
+func git(dir string, args ...string) string {
+	if dir == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
 	if err != nil {
 		return ""
 	}
