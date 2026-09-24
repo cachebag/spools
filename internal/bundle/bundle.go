@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-const Version = 1
+// Version 2 added the _URI path placeholders. Version 1 bundles are a subset
+// and still import fine.
+const Version = 2
 
 type Bundle struct {
 	Version   int               `json:"version"`
@@ -42,8 +44,8 @@ func Read(r io.Reader) (*Bundle, error) {
 	if err := json.NewDecoder(r).Decode(&b); err != nil {
 		return nil, fmt.Errorf("reading bundle: %w", err)
 	}
-	if b.Version != Version {
-		return nil, fmt.Errorf("unsupported bundle version %d (want %d)", b.Version, Version)
+	if b.Version < 1 || b.Version > Version {
+		return nil, fmt.Errorf("unsupported bundle version %d (this spools reads up to %d; update it)", b.Version, Version)
 	}
 	if b.SessionID == "" {
 		return nil, fmt.Errorf("bundle has no session id")
