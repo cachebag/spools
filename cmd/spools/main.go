@@ -49,10 +49,10 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:    "export <session-id>",
-		Short:  "Export one session as a bundle (JSON on stdout)",
-		Args:   cobra.ExactArgs(1),
-		RunE:   func(c *cobra.Command, args []string) error {
+		Use:   "export <session-id>",
+		Short: "Export one session as a bundle (JSON on stdout)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
 			b, err := a.Export(args[0])
 			if err != nil {
 				return err

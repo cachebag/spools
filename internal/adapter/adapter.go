@@ -30,6 +30,6 @@ type Adapter interface {
 }
 
 type ImportOptions struct {
-	DryRun bool
+	DryRun      bool
 	ProjectRoot string
 }
