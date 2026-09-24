@@ -5,6 +5,11 @@ linters:
     - govet
     - staticcheck
     - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
 formatters:
   enable:
     - gofmt
