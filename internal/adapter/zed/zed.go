@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,22 +22,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Zed struct{ dbPath string }
+// Zed keeps agent threads in <dir>/threads/threads.db and workspace history
+// in <dir>/db/<channel>/db.sqlite.
+type Zed struct {
+	dbPath string
+	dir    string
+}
 
-func New() *Zed { return &Zed{dbPath: defaultDBPath()} }
+func New() *Zed {
+	dir := defaultDir()
+	return &Zed{dbPath: filepath.Join(dir, "threads", "threads.db"), dir: dir}
+}
 
-func defaultDBPath() string {
+func defaultDir() string {
 	home, _ := os.UserHomeDir()
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "Zed", "threads", "threads.db")
+		return filepath.Join(home, "Library", "Application Support", "Zed")
 	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Zed", "threads", "threads.db")
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Zed")
 	default:
 		if x := os.Getenv("XDG_DATA_HOME"); x != "" {
-			return filepath.Join(x, "zed", "threads", "threads.db")
+			return filepath.Join(x, "zed")
 		}
-		return filepath.Join(home, ".local", "share", "zed", "threads", "threads.db")
+		return filepath.Join(home, ".local", "share", "zed")
 	}
 }
 
@@ -86,6 +95,61 @@ func (z *Zed) List() ([]adapter.Session, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// KnownProjects reads local workspaces from every release channel's db
+// (stable, preview, ...), newest first. Remote (ssh) workspaces are skipped
+// since their paths live on another machine.
+func (z *Zed) KnownProjects() ([]string, error) {
+	dbs, err := filepath.Glob(filepath.Join(z.dir, "db", "*", "db.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+
+	type workspace struct{ path, ts string }
+	var all []workspace
+	for _, path := range dbs {
+		db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return nil, err
+		}
+		rows, err := db.Query(`SELECT paths, timestamp FROM workspaces
+			WHERE remote_connection_id IS NULL AND paths IS NOT NULL AND paths != ''`)
+		if err != nil {
+			// 0-global and friends have no workspaces table.
+			db.Close()
+			continue
+		}
+		for rows.Next() {
+			var paths, ts string
+			if err := rows.Scan(&paths, &ts); err != nil {
+				rows.Close()
+				db.Close()
+				return nil, err
+			}
+			for _, p := range strings.Split(paths, "\n") {
+				all = append(all, workspace{p, ts})
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		db.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Zed's timestamps (RFC 3339) sort as strings.
+	sort.SliceStable(all, func(i, j int) bool { return all[i].ts > all[j].ts })
+	seen := map[string]bool{}
+	var out []string
+	for _, w := range all {
+		if !seen[w.path] {
+			seen[w.path] = true
+			out = append(out, w.path)
+		}
+	}
+	return out, nil
 }
 
 func decode(dataType string, data []byte) ([]byte, error) {

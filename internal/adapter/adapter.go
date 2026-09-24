@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,6 +26,10 @@ type Adapter interface {
 	Running() bool
 
 	List() ([]Session, error)
+
+	// KnownProjects returns local folders the tool has opened, most recent
+	// first. Import matches a thread's git remote against these.
+	KnownProjects() ([]string, error)
 
 	Export(id string) (*bundle.Bundle, error)
 
@@ -62,7 +67,10 @@ func Import(a Adapter, b *bundle.Bundle, opts ImportOptions) (*ImportResult, err
 		return nil, fmt.Errorf("%s is running on this machine; quit it before importing", a.Name())
 	}
 
-	root, err := project.Resolve(opts.ProjectRoot, b.Origin.ProjectRoot, b.Origin.Home, b.GitRemote)
+	root, err := project.Resolve(opts.ProjectRoot, b.Origin.ProjectRoot, b.GitRemote, a.KnownProjects)
+	if errors.Is(err, project.ErrNotFound) {
+		return nil, fmt.Errorf("%w; open it in %s once, or pass --project <path>", err, a.Name())
+	}
 	if err != nil {
 		return nil, err
 	}
