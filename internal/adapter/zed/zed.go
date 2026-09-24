@@ -104,7 +104,7 @@ func decode(dataType string, data []byte) ([]byte, error) {
 }
 
 func gitOutput(root string, args ...string) string {
-	out, err := exec.Command("git", append([] string{"-C", root}, args...)...).Output()
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
 	if err != nil {
 		return ""
 	}
