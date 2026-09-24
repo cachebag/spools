@@ -16,13 +16,17 @@ import (
 
 	"github.com/cachebag/spools/internal/adapter"
 	"github.com/cachebag/spools/internal/bundle"
+	"github.com/cachebag/spools/internal/project"
 	"github.com/klauspost/compress/zstd"
 	_ "modernc.org/sqlite"
 )
 
-type Zed struct{ dbPath string }
+type Zed struct {
+	dbPath  string
+	running func() bool
+}
 
-func New() *Zed { return &Zed{dbPath: defaultDBPath()} }
+func New() *Zed { return &Zed{dbPath: defaultDBPath(), running: zedRunning} }
 
 func defaultDBPath() string {
 	home, _ := os.UserHomeDir()
@@ -46,8 +50,10 @@ func (z *Zed) Detect() bool {
 	return err == nil
 }
 
+func (z *Zed) Running() bool { return z.running != nil && z.running() }
+
 // blegh...
-func (z *Zed) Running() bool {
+func zedRunning() bool {
 	name := "zed"
 	if runtime.GOOS == "darwin" {
 		name = "Zed"
@@ -120,10 +126,10 @@ func (z *Zed) Export(id string) (*bundle.Bundle, error) {
 
 	var summary, updated, dataType string
 	var data []byte
-	var parentID, folders, created sql.NullString
+	var parentID, folders, foldersOrder, created sql.NullString
 	err = db.QueryRow(
-		`SELECT summary, updated_at, data_type, data, parent_id, folder_paths, created_at FROM threads WHERE id = ?`, id,
-	).Scan(&summary, &updated, &dataType, &data, &parentID, &folders, &created)
+		`SELECT summary, updated_at, data_type, data, parent_id, folder_paths, folder_paths_order, created_at FROM threads WHERE id = ?`, id,
+	).Scan(&summary, &updated, &dataType, &data, &parentID, &folders, &foldersOrder, &created)
 	if err != nil {
 		return nil, err
 	}
@@ -161,14 +167,114 @@ func (z *Zed) Export(id string) (*bundle.Bundle, error) {
 		Origin:    bundle.Origin{Machine: host, ProjectRoot: projectRoot, Home: home},
 		Payload:   []byte(s),
 		Meta: map[string]string{
-			"data_type":    dataType,
-			"parent_id":    parentID.String,
-			"folder_paths": folders.String,
-			"created_at":   created.String,
+			"data_type":          dataType,
+			"parent_id":          parentID.String,
+			"folder_paths":       folders.String,
+			"folder_paths_order": foldersOrder.String,
+			"created_at":         created.String,
 		},
 	}, nil
 }
 
-func (z *Zed) Import(b *bundle.Bundle, opts adapter.ImportOptions) error {
-	panic("not implemented")
+// zedTime matches how Zed writes timestamps (RFC 3339, +00:00 rather than Z).
+const zedTime = "2006-01-02T15:04:05.999999999-07:00"
+
+func encode(payload []byte) ([]byte, error) {
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		return nil, err
+	}
+	out := enc.EncodeAll(payload, nil)
+	return out, enc.Close()
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func (z *Zed) Import(b *bundle.Bundle, opts adapter.ImportOptions) (*adapter.ImportResult, error) {
+	if b.Tool != z.Name() {
+		return nil, fmt.Errorf("bundle is for %q, not %q", b.Tool, z.Name())
+	}
+	if !z.Detect() {
+		return nil, fmt.Errorf("zed thread store not found at %s", z.dbPath)
+	}
+	// Zed holds the db open; writing underneath it risks corrupting the store.
+	if !opts.DryRun && z.Running() {
+		return nil, fmt.Errorf("zed is running on this machine; quit it before importing")
+	}
+
+	root, err := project.Resolve(opts.ProjectRoot, b.Origin.ProjectRoot, b.Origin.Home, b.GitRemote)
+	if err != nil {
+		return nil, err
+	}
+	home, _ := os.UserHomeDir()
+
+	s := strings.ReplaceAll(string(b.Payload), "{{PROJECT}}", root)
+	s = strings.ReplaceAll(s, "{{HOME}}", home)
+	payload := []byte(s)
+	if !json.Valid(payload) {
+		return nil, fmt.Errorf("thread %s: payload is not valid JSON after path rewrite", b.SessionID)
+	}
+
+	// First folder is the project root; any others get rebased onto the local home.
+	var folders []string
+	if fp := b.Meta["folder_paths"]; fp != "" {
+		folders = strings.Split(fp, "\n")
+		for i := 1; i < len(folders); i++ {
+			if b.Origin.Home != "" && home != "" {
+				if rel, ok := strings.CutPrefix(folders[i], b.Origin.Home); ok {
+					folders[i] = home + rel
+				}
+			}
+		}
+		folders[0] = root
+	} else if root != "" {
+		folders = []string{root}
+	}
+
+	updated := time.Now().UTC()
+	if !b.UpdatedAt.IsZero() {
+		updated = b.UpdatedAt.UTC()
+	}
+
+	data, err := encode(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := "rw"
+	if opts.DryRun {
+		mode = "ro"
+	}
+	db, err := sql.Open("sqlite", "file:"+z.dbPath+"?mode="+mode+"&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	res := &adapter.ImportResult{ID: b.SessionID, Title: b.Title, ProjectRoot: root}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM threads WHERE id = ?`, b.SessionID).Scan(&n); err != nil {
+		return nil, err
+	}
+	res.Replaced = n > 0
+	if opts.DryRun {
+		return res, nil
+	}
+
+	_, err = db.Exec(
+		`INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data, parent_id, folder_paths, folder_paths_order, created_at)
+		 VALUES (?, ?, ?, 'zstd', ?, ?, ?, ?, ?)`,
+		b.SessionID, b.Title, updated.Format(zedTime), data,
+		nullable(b.Meta["parent_id"]), nullable(strings.Join(folders, "\n")),
+		nullable(b.Meta["folder_paths_order"]), nullable(b.Meta["created_at"]),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
