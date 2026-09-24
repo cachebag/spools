@@ -44,10 +44,13 @@ func Command(args ...string) string {
 }
 
 func quote(s string) string {
-	if s != "" && strings.IndexFunc(s, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:@", r))
-	}) < 0 {
+	if s != "" && !strings.ContainsFunc(s, needsQuote) {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func needsQuote(r rune) bool {
+	safe := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:@", r)
+	return !safe
 }
