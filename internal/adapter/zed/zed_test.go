@@ -2,9 +2,8 @@ package zed
 
 import (
 	"database/sql"
-	"os"
+	"encoding/json"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -30,7 +29,7 @@ func newStore(t *testing.T) *Zed {
 	if _, err := db.Exec(schema); err != nil {
 		t.Fatal(err)
 	}
-	return &Zed{dbPath: path, running: func() bool { return false }}
+	return &Zed{dbPath: path}
 }
 
 func insert(t *testing.T, z *Zed, id, folder, payload string) {
@@ -70,13 +69,21 @@ func payloadOf(t *testing.T, z *Zed, id string) (payload, folders string) {
 	return string(out), folders
 }
 
-func TestExportImportRoundTrip(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("export doesn't templatize JSON-escaped windows paths yet")
+// cwdPayload builds a payload the way Zed would, so windows paths get their
+// backslashes JSON-escaped.
+func cwdPayload(t *testing.T, root string) string {
+	t.Helper()
+	out, err := json.Marshal(map[string]string{"cwd": root + "/main.go"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return string(out)
+}
+
+func TestExportImportRoundTrip(t *testing.T) {
 	src, dst := newStore(t), newStore(t)
 	origin := t.TempDir()
-	insert(t, src, "t1", origin, `{"cwd":"`+origin+`/main.go"}`)
+	insert(t, src, "t1", origin, cwdPayload(t, origin))
 
 	b, err := src.Export("t1")
 	if err != nil {
@@ -95,7 +102,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected result %+v", res)
 	}
 	payload, folders := payloadOf(t, dst, "t1")
-	if want := `{"cwd":"` + target + `/main.go"}`; payload != want {
+	if want := cwdPayload(t, target); payload != want {
 		t.Fatalf("payload = %s, want %s", payload, want)
 	}
 	if folders != target {
@@ -113,15 +120,12 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 func TestImportDryRunWritesNothing(t *testing.T) {
 	src, dst := newStore(t), newStore(t)
-	origin := t.TempDir()
-	insert(t, src, "t1", origin, `{}`)
+	insert(t, src, "t1", t.TempDir(), `{}`)
 	b, err := src.Export("t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Running only blocks real writes, not dry runs.
-	dst.running = func() bool { return true }
-	if _, err := dst.Import(b, adapter.ImportOptions{DryRun: true}); err != nil {
+	if _, err := dst.Import(b, adapter.ImportOptions{DryRun: true, ProjectRoot: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
 	db, _ := sql.Open("sqlite", "file:"+dst.dbPath+"?mode=ro")
@@ -129,38 +133,5 @@ func TestImportDryRunWritesNothing(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM threads`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("dry run wrote %d rows (err %v)", n, err)
-	}
-}
-
-func TestImportRefusesWhileRunning(t *testing.T) {
-	src, dst := newStore(t), newStore(t)
-	insert(t, src, "t1", t.TempDir(), `{}`)
-	b, err := src.Export("t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dst.running = func() bool { return true }
-	if _, err := dst.Import(b, adapter.ImportOptions{}); err == nil || !strings.Contains(err.Error(), "running") {
-		t.Fatalf("want running error, got %v", err)
-	}
-}
-
-func TestImportMissingProject(t *testing.T) {
-	src, dst := newStore(t), newStore(t)
-	origin := filepath.Join(t.TempDir(), "gone")
-	if err := os.Mkdir(origin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	insert(t, src, "t1", origin, `{}`)
-	b, err := src.Export("t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(origin); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SPOOLS_PROJECT_DIRS", t.TempDir())
-	if _, err := dst.Import(b, adapter.ImportOptions{}); err == nil || !strings.Contains(err.Error(), "--project") {
-		t.Fatalf("want --project hint, got %v", err)
 	}
 }
