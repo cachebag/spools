@@ -17,6 +17,7 @@ func (f *fake) Name() string                          { return "fake" }
 func (f *fake) Detect() bool                          { return f.detect }
 func (f *fake) Running() bool                         { return f.running }
 func (f *fake) List() ([]Session, error)              { return nil, nil }
+func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(b *bundle.Bundle, opts ImportOptions) (*ImportResult, error) {
 	f.got = &opts
@@ -39,8 +40,8 @@ func TestImportResolvesProject(t *testing.T) {
 }
 
 func TestImportRefusals(t *testing.T) {
-	gone := filepath.Join(t.TempDir(), "gone")
-	t.Setenv("SPOOLS_PROJECT_DIRS", t.TempDir())
+	gone := bundleAt(filepath.Join(t.TempDir(), "gone"))
+	gone.GitRemote = "git@github.com:cachebag/spools.git"
 
 	wrongTool := bundleAt(t.TempDir())
 	wrongTool.Tool = "other"
@@ -55,7 +56,7 @@ func TestImportRefusals(t *testing.T) {
 		{"wrong tool", &fake{detect: true}, wrongTool, ImportOptions{}, `not "fake"`},
 		{"not installed", &fake{}, bundleAt(t.TempDir()), ImportOptions{}, "not found"},
 		{"running", &fake{detect: true, running: true}, bundleAt(t.TempDir()), ImportOptions{}, "running"},
-		{"missing project", &fake{detect: true}, bundleAt(gone), ImportOptions{}, "--project"},
+		{"missing project", &fake{detect: true}, gone, ImportOptions{}, "open it in fake once, or pass --project"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Import(tc.f, tc.b, tc.opts)
