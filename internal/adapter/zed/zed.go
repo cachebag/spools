@@ -21,12 +21,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Zed struct {
-	dbPath  string
-	running func() bool
-}
+type Zed struct{ dbPath string }
 
-func New() *Zed { return &Zed{dbPath: defaultDBPath(), running: zedRunning} }
+func New() *Zed { return &Zed{dbPath: defaultDBPath()} }
 
 func defaultDBPath() string {
 	home, _ := os.UserHomeDir()
@@ -50,10 +47,8 @@ func (z *Zed) Detect() bool {
 	return err == nil
 }
 
-func (z *Zed) Running() bool { return z.running != nil && z.running() }
-
 // blegh...
-func zedRunning() bool {
+func (z *Zed) Running() bool {
 	name := "zed"
 	if runtime.GOOS == "darwin" {
 		name = "Zed"
@@ -109,14 +104,6 @@ func decode(dataType string, data []byte) ([]byte, error) {
 	}
 }
 
-func gitOutput(root string, args ...string) string {
-	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func (z *Zed) Export(id string) (*bundle.Bundle, error) {
 	db, err := z.open()
 	if err != nil {
@@ -146,14 +133,6 @@ func (z *Zed) Export(id string) (*bundle.Bundle, error) {
 	home, _ := os.UserHomeDir()
 	host, _ := os.Hostname()
 
-	s := string(payload)
-	if projectRoot != "" {
-		s = strings.ReplaceAll(s, projectRoot, "{{PROJECT}}")
-	}
-	if home != "" {
-		s = strings.ReplaceAll(s, home, "{{HOME}}")
-	}
-
 	updatedAt, _ := time.Parse(time.RFC3339, updated)
 
 	return &bundle.Bundle{
@@ -162,10 +141,10 @@ func (z *Zed) Export(id string) (*bundle.Bundle, error) {
 		SessionID: id,
 		Title:     summary,
 		UpdatedAt: updatedAt,
-		GitRemote: gitOutput(projectRoot, "remote", "get-url", "origin"),
-		GitBranch: gitOutput(projectRoot, "rev-parse", "--abbrev-ref", "HEAD"),
+		GitRemote: project.Remote(projectRoot),
+		GitBranch: project.Branch(projectRoot),
 		Origin:    bundle.Origin{Machine: host, ProjectRoot: projectRoot, Home: home},
-		Payload:   []byte(s),
+		Payload:   bundle.Templatize(payload, projectRoot, home),
 		Meta: map[string]string{
 			"data_type":          dataType,
 			"parent_id":          parentID.String,
@@ -196,26 +175,10 @@ func nullable(s string) any {
 }
 
 func (z *Zed) Import(b *bundle.Bundle, opts adapter.ImportOptions) (*adapter.ImportResult, error) {
-	if b.Tool != z.Name() {
-		return nil, fmt.Errorf("bundle is for %q, not %q", b.Tool, z.Name())
-	}
-	if !z.Detect() {
-		return nil, fmt.Errorf("zed thread store not found at %s", z.dbPath)
-	}
-	// Zed holds the db open; writing underneath it risks corrupting the store.
-	if !opts.DryRun && z.Running() {
-		return nil, fmt.Errorf("zed is running on this machine; quit it before importing")
-	}
-
-	root, err := project.Resolve(opts.ProjectRoot, b.Origin.ProjectRoot, b.Origin.Home, b.GitRemote)
-	if err != nil {
-		return nil, err
-	}
+	root := opts.ProjectRoot
 	home, _ := os.UserHomeDir()
 
-	s := strings.ReplaceAll(string(b.Payload), "{{PROJECT}}", root)
-	s = strings.ReplaceAll(s, "{{HOME}}", home)
-	payload := []byte(s)
+	payload := bundle.Expand(b.Payload, root, home)
 	if !json.Valid(payload) {
 		return nil, fmt.Errorf("thread %s: payload is not valid JSON after path rewrite", b.SessionID)
 	}
@@ -225,10 +188,8 @@ func (z *Zed) Import(b *bundle.Bundle, opts adapter.ImportOptions) (*adapter.Imp
 	if fp := b.Meta["folder_paths"]; fp != "" {
 		folders = strings.Split(fp, "\n")
 		for i := 1; i < len(folders); i++ {
-			if b.Origin.Home != "" && home != "" {
-				if rel, ok := strings.CutPrefix(folders[i], b.Origin.Home); ok {
-					folders[i] = home + rel
-				}
+			if p, ok := project.Rebase(folders[i], b.Origin.Home, home); ok {
+				folders[i] = p
 			}
 		}
 		folders[0] = root

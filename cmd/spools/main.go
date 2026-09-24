@@ -145,7 +145,7 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 }
 
 func runImport(a adapter.Adapter, b *bundle.Bundle, opts adapter.ImportOptions) error {
-	res, err := a.Import(b, opts)
+	res, err := adapter.Import(a, b, opts)
 	if err != nil {
 		return err
 	}
