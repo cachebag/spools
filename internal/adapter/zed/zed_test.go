@@ -3,6 +3,7 @@ package zed
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,5 +134,60 @@ func TestImportDryRunWritesNothing(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM threads`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("dry run wrote %d rows (err %v)", n, err)
+	}
+}
+
+func workspaceDB(t *testing.T, dir, channel string, rows ...[3]any) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "db", channel), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "db", channel, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE workspaces (workspace_id INTEGER PRIMARY KEY, paths TEXT, remote_connection_id INTEGER, timestamp TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(`INSERT INTO workspaces (paths, remote_connection_id, timestamp) VALUES (?, ?, ?)`, r[0], r[1], r[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestKnownProjects(t *testing.T) {
+	dir := t.TempDir()
+	workspaceDB(t, dir, "0-stable",
+		[3]any{"/code/old", nil, "2026-01-01 00:00:00"},
+		[3]any{"/code/new", nil, "2026-09-01 00:00:00"},
+		[3]any{"/home/me/remote", 3, "2026-09-02 00:00:00"},
+		[3]any{"", nil, "2026-09-03 00:00:00"},
+	)
+	workspaceDB(t, dir, "0-preview",
+		[3]any{"/code/a\n/code/b", nil, "2026-05-01 00:00:00"},
+		[3]any{"/code/old", nil, "2026-08-01 00:00:00"},
+	)
+	// 0-global has no workspaces table and should be skipped.
+	if err := os.MkdirAll(filepath.Join(dir, "db", "0-global"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	global, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "db", "0-global", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := global.Exec(`CREATE TABLE kv_store (key TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	global.Close()
+
+	got, err := (&Zed{dir: dir}).KnownProjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/code/new", "/code/old", "/code/a", "/code/b"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

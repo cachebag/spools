@@ -2,6 +2,7 @@
 package project
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,15 +10,13 @@ import (
 	"strings"
 )
 
-// EnvDirs overrides the directories searched for a matching git remote
-// (os.PathListSeparator separated).
-const EnvDirs = "SPOOLS_PROJECT_DIRS"
+var ErrNotFound = errors.New("project not found locally")
 
-// Resolve picks the local project root for a thread that lived at originRoot
-// on a machine whose home was originHome. Tried in order: the override, the
-// original path, the original path rebased onto the local home, then any repo
-// in the search dirs whose origin remote matches gitRemote.
-func Resolve(override, originRoot, originHome, gitRemote string) (string, error) {
+// Resolve picks the local project root for a thread that lived at originRoot.
+// Tried in order: the override, the original path, then the first of the
+// tool's recently opened projects (most recent first) with a matching remote.
+// known is only called if the first two miss.
+func Resolve(override, originRoot, gitRemote string, known func() ([]string, error)) (string, error) {
 	if override != "" {
 		abs, err := filepath.Abs(override)
 		if err != nil {
@@ -35,48 +34,26 @@ func Resolve(override, originRoot, originHome, gitRemote string) (string, error)
 		return originRoot, nil
 	}
 
-	home, _ := os.UserHomeDir()
-	if p, ok := Rebase(originRoot, originHome, home); ok && isDir(p) {
-		return p, nil
+	want := normalizeRemote(gitRemote)
+	if want == "" {
+		return "", fmt.Errorf("%s isn't here and has no git remote to match on; pass --project <path>", originRoot)
 	}
-
-	if want := normalizeRemote(gitRemote); want != "" {
-		for _, dir := range searchDirs(home) {
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				continue
-			}
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				p := filepath.Join(dir, e.Name())
-				// Skip non-repos without shelling out; git -C would walk up to a parent repo.
-				if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
-					continue
-				}
-				if normalizeRemote(Remote(p)) == want {
-					return p, nil
-				}
+	candidates, err := known()
+	if err != nil {
+		return "", fmt.Errorf("listing recent projects: %w", err)
+	}
+	for _, p := range candidates {
+		// Only repos themselves; an opened parent dir like ~/code doesn't count.
+		if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
+			continue
+		}
+		for _, r := range remotes(p) {
+			if normalizeRemote(r) == want {
+				return p, nil
 			}
 		}
 	}
-
-	return "", fmt.Errorf("can't find project %s locally (remote %q); pass --project <path> or set %s", originRoot, gitRemote, EnvDirs)
-}
-
-func searchDirs(home string) []string {
-	if v := os.Getenv(EnvDirs); v != "" {
-		return filepath.SplitList(v)
-	}
-	if home == "" {
-		return nil
-	}
-	var out []string
-	for _, d := range []string{"personal", "code", "src", "projects"} {
-		out = append(out, filepath.Join(home, d))
-	}
-	return out
+	return "", fmt.Errorf("%w: %s (remote %s)", ErrNotFound, originRoot, gitRemote)
 }
 
 // Rebase moves path from under fromHome to under toHome.
@@ -96,6 +73,17 @@ func Remote(dir string) string { return git(dir, "remote", "get-url", "origin") 
 
 // Branch returns dir's current branch, or "" if it isn't a repo.
 func Branch(dir string) string { return git(dir, "rev-parse", "--abbrev-ref", "HEAD") }
+
+// remotes returns every remote URL in dir, so forks match on upstream too.
+func remotes(dir string) []string {
+	var out []string
+	for _, line := range strings.Split(git(dir, "config", "--get-regexp", `^remote\..*\.url$`), "\n") {
+		if _, url, ok := strings.Cut(line, " "); ok {
+			out = append(out, url)
+		}
+	}
+	return out
+}
 
 func git(dir string, args ...string) string {
 	if dir == "" {
