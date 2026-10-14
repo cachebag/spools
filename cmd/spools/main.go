@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/cachebag/spools/internal/adapter"
 	"github.com/cachebag/spools/internal/adapter/zed"
@@ -36,7 +37,8 @@ func main() {
 func toolCommand(a adapter.Adapter) *cobra.Command {
 	cmd := &cobra.Command{Use: a.Name(), Short: "Manage " + a.Name() + " sessions"}
 
-	cmd.AddCommand(&cobra.Command{
+	var projectFilter string
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List local sessions",
 		RunE: func(c *cobra.Command, args []string) error {
@@ -48,11 +50,22 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 				return err
 			}
 			for _, s := range sessions {
-				fmt.Printf("%-40s  %-30s  %s\n", s.ID, s.Title, s.UpdatedAt.Format("2006-01-02 15:04"))
+				if projectFilter != "" && !strings.Contains(s.Project, projectFilter) {
+					continue
+				}
+				title := s.Title
+				if title == "" {
+					title = "(untitled)"
+				} else if len(title) > 40 {
+					title = title[:37] + "..."
+				}
+				fmt.Printf("%-36s  %-40s  %-16s  %s\n", s.ID, title, s.UpdatedAt.Format("2006-01-02 15:04"), s.Project)
 			}
 			return nil
 		},
-	})
+	}
+	listCmd.Flags().StringVar(&projectFilter, "project", "", "only sessions whose project path contains this")
+	cmd.AddCommand(listCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "export <session-id>",
