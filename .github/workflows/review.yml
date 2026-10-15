@@ -1,0 +1,47 @@
+name: review
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: >
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@mel') &&
+      github.event.comment.author_association == 'OWNER'
+    runs-on: [self-hosted, reviewer]
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get the diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr diff ${{ github.event.issue.number }} --repo ${{ github.repository }} > "$RUNNER_TEMP/pr.diff"
+
+      - name: Review
+        run: |
+          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific, reference files and lines, and skip praise." \
+            --allowedTools "Read,Grep,Glob" \
+            --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
+            --max-turns 30 \
+            --output-format text > "$RUNNER_TEMP/review.md"
+
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_PRIVATE_KEY }}
+
+      - name: Post review
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh pr review ${{ github.event.issue.number }} --repo ${{ github.repository }} --comment --body-file "$RUNNER_TEMP/review.md"
