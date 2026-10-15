@@ -17,10 +17,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Set by the release build with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	root := &cobra.Command{
-		Use:   "spools",
-		Short: "Move agent threads/sessions between machines",
+		Use:     "spools",
+		Short:   "Move agent threads/sessions between machines",
+		Version: version,
 
 		SilenceUsage:  true,
 		SilenceErrors: true,
