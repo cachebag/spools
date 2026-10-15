@@ -31,12 +31,21 @@ spools needs nothing beyond working ssh between your machines.
        User <user>
    ```
 
-3. Install spools on both machines, somewhere on the non-interactive `PATH`:
+3. Install spools on both machines, somewhere on the non-interactive `PATH`. Either grab a binary from the [releases page](https://github.com/cachebag/spools/releases):
+
+   ```bash
+   curl -L https://github.com/cachebag/spools/releases/latest/download/spools_<version>_<os>_<arch>.tar.gz | tar xz
+   sudo install -m 755 spools /usr/local/bin/spools
+   ```
+
+   or build it with Go:
 
    ```bash
    go install github.com/cachebag/spools/cmd/spools@latest
    sudo install -m 755 ~/go/bin/spools /usr/local/bin/spools
    ```
+
+   `spools --version` tells you what you have.
 
 4. Check it: `ssh <host> 'command -v spools'` should print `/usr/local/bin/spools`.
 
