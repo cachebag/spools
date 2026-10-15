@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cachebag/spools/internal/adapter"
 )
@@ -189,5 +190,42 @@ func TestKnownProjects(t *testing.T) {
 	want := []string{"/code/new", "/code/old", "/code/a", "/code/b"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestRegister(t *testing.T) {
+	dir := t.TempDir()
+	workspaceDB(t, dir, "0-stable")
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "db", "0-stable", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE sidebar_threads (thread_id BLOB PRIMARY KEY, session_id TEXT, agent_id TEXT, title TEXT NOT NULL,
+		updated_at TEXT NOT NULL, created_at TEXT, folder_paths TEXT, folder_paths_order TEXT, archived INTEGER DEFAULT 0,
+		main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT, interacted_at TEXT, title_override TEXT) STRICT`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	z := &Zed{dir: dir}
+	e := External{Tool: "claude", SessionID: "s1", Title: "first", Root: "/code/x", Updated: time.Now()}
+	if err := z.Register(e); err != nil {
+		t.Fatal(err)
+	}
+	e.Title = "second"
+	if err := z.Register(e); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	var title, agent, folders string
+	if err := db.QueryRow(`SELECT COUNT(*), title, agent_id, folder_paths FROM sidebar_threads`).Scan(&n, &title, &agent, &folders); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || title != "second" || agent != "claude-acp" || folders != "/code/x" {
+		t.Fatalf("%d %s %s %s", n, title, agent, folders)
+	}
+	if err := z.Register(External{Tool: "nope"}); err == nil {
+		t.Fatal("unknown tool should error")
 	}
 }

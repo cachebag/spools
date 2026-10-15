@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cachebag/spools/internal/adapter"
+	"github.com/cachebag/spools/internal/adapter/claude"
 	"github.com/cachebag/spools/internal/adapter/zed"
 	"github.com/cachebag/spools/internal/bundle"
 	"github.com/cachebag/spools/internal/remote"
@@ -23,7 +25,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	adapters := []adapter.Adapter{zed.New()}
+	adapters := []adapter.Adapter{zed.New(), claude.New()}
 	for _, a := range adapters {
 		root.AddCommand(toolCommand(a))
 	}
@@ -173,5 +175,30 @@ func runImport(a adapter.Adapter, b *bundle.Bundle, opts adapter.ImportOptions) 
 		}
 	}
 	fmt.Printf("%s %s (%s) -> %s\n", verb, res.ID, res.Title, res.ProjectRoot)
+	if opts.DryRun || a.Name() == "zed" {
+		return nil
+	}
+
+	// External agent threads show up in zed's sidebar only via an index row.
+	z := zed.New()
+	if !z.Detect() {
+		return nil
+	}
+	if z.Running() {
+		fmt.Fprintln(os.Stderr, "zed is running; thread won't show in its sidebar until you quit zed and re-import")
+		return nil
+	}
+	var created time.Time
+	if c := b.Meta["created_at"]; c != "" {
+		created, _ = time.Parse(time.RFC3339Nano, c)
+	}
+	err = z.Register(zed.External{
+		Tool: a.Name(), SessionID: res.ID, Title: res.Title, Root: res.ProjectRoot,
+		Created: created, Updated: b.UpdatedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("registering with zed: %w", err)
+	}
+	fmt.Println("added to zed sidebar")
 	return nil
 }
