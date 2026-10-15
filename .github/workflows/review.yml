@@ -3,37 +3,24 @@ name: review
 on:
   issue_comment:
     types: [created]
+  pull_request_target:
+    types: [labeled]
 
 jobs:
   review:
     if: >
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '@mel') &&
-      github.event.comment.author_association == 'OWNER'
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'mel') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@mel-the-caddie') &&
+       github.event.comment.author_association == 'OWNER')
     runs-on: [self-hosted, reviewer]
     permissions:
       contents: read
       pull-requests: read
+    env:
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: refs/pull/${{ github.event.issue.number }}/head
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Get the diff
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh pr diff ${{ github.event.issue.number }} --repo ${{ github.repository }} > "$RUNNER_TEMP/pr.diff"
-
-      - name: Review
-        run: |
-          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific, reference files and lines, and skip praise." \
-            --allowedTools "Read,Grep,Glob" \
-            --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
-            --max-turns 30 \
-            --output-format text > "$RUNNER_TEMP/review.md"
-
       - name: App token
         id: app
         uses: actions/create-github-app-token@v2
@@ -41,7 +28,62 @@ jobs:
           app-id: ${{ secrets.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_PRIVATE_KEY }}
 
+      - name: Say it's started
+        id: ack
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api repos/$REPO/issues/$PR/comments -f body="don't fucking touch anything, let me review this shit first." --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get the diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr diff $PR --repo $REPO > "$RUNNER_TEMP/pr.diff"
+
+      - name: Review
+        run: |
+          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific, reference files and lines, and skip praise. The very first line of your reply must be exactly one of: VERDICT: APPROVE, VERDICT: REQUEST_CHANGES, or VERDICT: COMMENT. Use REQUEST_CHANGES only for bugs or broken behavior, not style. Put the review after that line." \
+            --allowedTools "Read,Grep,Glob" \
+            --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
+            --max-turns 30 \
+            --output-format text > "$RUNNER_TEMP/review.md"
+
       - name: Post review
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-        run: gh pr review ${{ github.event.issue.number }} --repo ${{ github.repository }} --comment --body-file "$RUNNER_TEMP/review.md"
+        run: |
+          verdict=$(head -n1 "$RUNNER_TEMP/review.md" | tr -d '\r')
+          tail -n +2 "$RUNNER_TEMP/review.md" > "$RUNNER_TEMP/body.md"
+          case "$verdict" in
+            "VERDICT: APPROVE")         flag=--approve ;;
+            "VERDICT: REQUEST_CHANGES") flag=--request-changes ;;
+            *)                          flag=--comment ;;
+          esac
+          gh pr review $PR --repo $REPO $flag --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Remove the placeholder
+        if: success() && steps.ack.outputs.id
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh api -X DELETE repos/$REPO/issues/comments/${{ steps.ack.outputs.id }}
+
+      - name: Say it failed
+        if: failure() && steps.ack.outputs.id
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          gh api -X PATCH repos/$REPO/issues/comments/${{ steps.ack.outputs.id }} \
+            -f body="Review failed. Log: ${{ github.server_url }}/$REPO/actions/runs/${{ github.run_id }}"
+
+      - name: Remove the label
+        if: always() && github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: gh pr edit $PR --repo $REPO --remove-label mel
