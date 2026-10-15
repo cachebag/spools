@@ -130,15 +130,42 @@ func trimTitle(s string) string {
 	return s
 }
 
+// Session ids are UUIDs. Anything else is rejected before it reaches the
+// filesystem, since the id ends up in a glob and in a path that gets deleted.
+func validID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, r := range id {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if r != '-' {
+				return false
+			}
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Claude) sessionPath(id string) (string, error) {
+	if !validID(id) {
+		return "", fmt.Errorf("invalid session id %q", id)
+	}
 	matches, err := filepath.Glob(filepath.Join(c.dir, "*", id+".jsonl"))
 	if err != nil {
 		return "", err
 	}
-	if len(matches) == 0 {
+	switch len(matches) {
+	case 0:
 		return "", fmt.Errorf("session %s not found under %s", id, c.dir)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("session %s exists under more than one project: %s", id, strings.Join(matches, ", "))
 	}
-	return matches[0], nil
 }
 
 func (c *Claude) sessions() ([]string, error) {
