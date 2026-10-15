@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +22,42 @@ func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(*bundle.Bundle, adapter.ImportOptions) (*adapter.ImportResult, error) {
 	return nil, nil
+}
+
+func TestListSessionsEmptyIsNotNull(t *testing.T) {
+	got, err := listSessions(&fake{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := json.Marshal(got); string(out) != "[]" {
+		t.Fatalf("got %s", out)
+	}
+}
+
+func TestPullAllKeepsGoing(t *testing.T) {
+	sessions := []adapter.Session{{ID: "1"}, {ID: "2"}, {ID: "3"}}
+	var tried []string
+	var stderr bytes.Buffer
+	err := pullAll(sessions, &stderr, func(id string) error {
+		tried = append(tried, id)
+		if id == "2" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	if len(tried) != 3 {
+		t.Fatalf("tried %v, want all three", tried)
+	}
+	if err == nil || err.Error() != "1 of 3 sessions failed" {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(stderr.String(), "2: boom") {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+
+	if err := pullAll(sessions, &stderr, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestListSessions(t *testing.T) {
