@@ -119,22 +119,7 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 		Short: "Delete a local session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := adapter.Remove(a, args[0]); err != nil {
-				return err
-			}
-			fmt.Printf("removed %s\n", args[0])
-			if a.Name() == "zed" {
-				return nil
-			}
-			z := zed.New()
-			if !z.Detect() {
-				return nil
-			}
-			if z.Running() {
-				fmt.Fprintln(os.Stderr, "zed is running; its sidebar still lists this session until you quit zed and remove it again")
-				return nil
-			}
-			return z.Unregister(a.Name(), args[0])
+			return runRemove(a, zed.New(), args[0], os.Stdout)
 		},
 	})
 
@@ -201,6 +186,30 @@ project path contains it; each is imported into the matching local project.`,
 	cmd.AddCommand(pullCmd)
 
 	return cmd
+}
+
+// sidebar is the part of the zed adapter that tracks other agents' threads.
+type sidebar interface {
+	Detect() bool
+	Running() bool
+	Unregister(tool, sessionID string) error
+}
+
+// runRemove checks that the sidebar can be cleaned before deleting anything,
+// since the session can't be found again once it is gone.
+func runRemove(a adapter.Adapter, z sidebar, id string, out io.Writer) error {
+	external := a.Name() != "zed" && z.Detect()
+	if external && z.Running() {
+		return fmt.Errorf("zed is running on this machine; quit it before removing")
+	}
+	if err := adapter.Remove(a, id); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "removed %s\n", id)
+	if !external {
+		return nil
+	}
+	return z.Unregister(a.Name(), id)
 }
 
 func listSessions(a adapter.Adapter, projectFilter string) ([]adapter.Session, error) {
