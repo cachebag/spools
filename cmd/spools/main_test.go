@@ -12,14 +12,23 @@ import (
 	"github.com/cachebag/spools/internal/bundle"
 )
 
-type fake struct{ sessions []adapter.Session }
+type fake struct {
+	name     string
+	sessions []adapter.Session
+	removed  []string
+}
 
-func (f *fake) Name() string                          { return "fake" }
+func (f *fake) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "fake"
+}
 func (f *fake) Detect() bool                          { return true }
 func (f *fake) Running() bool                         { return false }
 func (f *fake) List() ([]adapter.Session, error)      { return f.sessions, nil }
 func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
-func (f *fake) Remove(string) error                   { return nil }
+func (f *fake) Remove(id string) error                { f.removed = append(f.removed, id); return nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(*bundle.Bundle, adapter.ImportOptions) (*adapter.ImportResult, error) {
 	return nil, nil
@@ -100,5 +109,48 @@ func TestSessionJSONRoundTrip(t *testing.T) {
 	}
 	if out != in {
 		t.Fatalf("got %+v, want %+v", out, in)
+	}
+}
+
+type fakeSidebar struct {
+	detect, running bool
+	unregistered    []string
+}
+
+func (s *fakeSidebar) Detect() bool  { return s.detect }
+func (s *fakeSidebar) Running() bool { return s.running }
+func (s *fakeSidebar) Unregister(tool, id string) error {
+	s.unregistered = append(s.unregistered, tool+":"+id)
+	return nil
+}
+
+func TestRunRemove(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tool         string
+		sidebar      *fakeSidebar
+		wantErr      string
+		wantRemoved  int
+		wantUnregist int
+	}{
+		{"zed running refuses before deleting", "claude", &fakeSidebar{detect: true, running: true}, "quit it before removing", 0, 0},
+		{"zed not installed skips sidebar", "claude", &fakeSidebar{}, "", 1, 0},
+		{"zed quit removes and unregisters", "claude", &fakeSidebar{detect: true}, "", 1, 1},
+		{"zed itself never touches the sidebar", "zed", &fakeSidebar{detect: true, running: true}, "", 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &fake{name: tc.tool}
+			var out bytes.Buffer
+			err := runRemove(a, tc.sidebar, "x", &out)
+			if tc.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("want %q, got %v", tc.wantErr, err)
+			}
+			if len(a.removed) != tc.wantRemoved || len(tc.sidebar.unregistered) != tc.wantUnregist {
+				t.Fatalf("removed %v, unregistered %v", a.removed, tc.sidebar.unregistered)
+			}
+		})
 	}
 }
