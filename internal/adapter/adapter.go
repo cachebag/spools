@@ -14,7 +14,7 @@ import (
 type Session struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
-	Project   string    `json:"project"`
+	Project   string    `json:"project"` // local project path
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
