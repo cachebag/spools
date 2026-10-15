@@ -169,15 +169,21 @@ project path contains it; each is imported into the matching local project.`,
 				return fmt.Errorf("no %s sessions on %s match %q", a.Name(), host, opts.ProjectRoot)
 			}
 			opts.ProjectRoot = ""
+			var failed []string
 			for _, s := range sessions {
 				if err := pull(a, host, s.ID, opts); err != nil {
-					return fmt.Errorf("%s: %w", s.ID, err)
+					fmt.Fprintf(os.Stderr, "%s: %v\n", s.ID, err)
+					failed = append(failed, s.ID)
 				}
+			}
+			if len(failed) > 0 {
+				return fmt.Errorf("%d of %d sessions failed", len(failed), len(sessions))
 			}
 			return nil
 		},
 	}
 	addImportFlags(pullCmd)
+	pullCmd.Flags().Lookup("project").Usage = "local project root with a session id, otherwise a filter on the remote project path"
 	cmd.AddCommand(pullCmd)
 
 	return cmd
@@ -191,7 +197,7 @@ func listSessions(a adapter.Adapter, projectFilter string) ([]adapter.Session, e
 	if projectFilter == "" {
 		return sessions, nil
 	}
-	var out []adapter.Session
+	out := []adapter.Session{}
 	for _, s := range sessions {
 		if strings.Contains(s.Project, projectFilter) {
 			out = append(out, s)
