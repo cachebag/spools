@@ -4,12 +4,13 @@ on:
   issue_comment:
     types: [created]
   pull_request_target:
-    types: [labeled]
+    types: [labeled, review_requested]
 
 jobs:
   review:
     if: >
-      (github.event_name == 'pull_request_target' && github.event.label.name == 'mel') ||
+      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'mel') ||
+      (github.event_name == 'pull_request_target' && github.event.action == 'review_requested' && github.event.requested_reviewer.login == 'mel-the-caddie[bot]') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        contains(github.event.comment.body, '@mel-the-caddie') &&
        github.event.comment.author_association == 'OWNER')
@@ -47,9 +48,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh pr diff $PR --repo $REPO > "$RUNNER_TEMP/pr.diff"
 
-      - name: Review
+      - name: Changes since the last review
+        id: since
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff, and check the number with Read before using it. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
+          gh api repos/$REPO/pulls/$PR/reviews --paginate \
+            --jq '[.[] | select(.user.login == "mel-the-caddie[bot]" and .state != "COMMENTED")] | last // empty | {commit_id, body}' \
+            > "$RUNNER_TEMP/last.json"
+          sha=$(jq -r '.commit_id // empty' "$RUNNER_TEMP/last.json")
+          if [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && [ "$sha" != "$(git rev-parse HEAD)" ]; then
+            git diff "$sha" HEAD > "$RUNNER_TEMP/since.diff"
+            jq -r .body "$RUNNER_TEMP/last.json" > "$RUNNER_TEMP/last.md"
+            gh api repos/$REPO/pulls/$PR/comments --paginate \
+              --jq '.[] | select(.user.login == "mel-the-caddie[bot]") | "- `\(.path):\(.line // .original_line)` \(.body)"' \
+              >> "$RUNNER_TEMP/last.md"
+            echo "followup=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "followup=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Review
+        env:
+          FOLLOWUP: ${{ steps.since.outputs.followup }}
+        run: |
+          if [ "$FOLLOWUP" = "true" ]; then
+            task="You already reviewed this pull request once. Your previous findings are at $RUNNER_TEMP/last.md. The changes pushed since then are at $RUNNER_TEMP/since.diff and the full diff of the pull request is at $RUNNER_TEMP/pr.diff. Review only the new changes: say which previous findings are fixed, which are not, and anything new the changes introduce. Do not repeat findings on code that did not change."
+          else
+            task="You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff."
+          fi
+          claude -p "$task The checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff, and check the number with Read before using it. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
