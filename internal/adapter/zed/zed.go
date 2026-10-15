@@ -403,14 +403,23 @@ func (z *Zed) Unregister(tool, sessionID string) error {
 		if err != nil {
 			return err
 		}
-		var n int
-		if db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'sidebar_threads'`).Scan(&n) == nil && n > 0 {
-			_, err = db.Exec(`DELETE FROM sidebar_threads WHERE session_id = ? AND agent_id = ?`, sessionID, agent)
-		}
+		err = unregisterIn(db, agent, sessionID)
 		db.Close()
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	return nil
+}
+
+func unregisterIn(db *sql.DB, agent, sessionID string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'sidebar_threads'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	_, err := db.Exec(`DELETE FROM sidebar_threads WHERE session_id = ? AND agent_id = ?`, sessionID, agent)
+	return err
 }
