@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,7 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 	cmd := &cobra.Command{Use: a.Name(), Short: "Manage " + a.Name() + " sessions"}
 
 	var projectFilter string
+	var asJSON bool
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List local sessions",
@@ -47,14 +49,14 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 			if !a.Detect() {
 				return fmt.Errorf("%s not found on this machine", a.Name())
 			}
-			sessions, err := a.List()
+			sessions, err := listSessions(a, projectFilter)
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return json.NewEncoder(os.Stdout).Encode(sessions)
+			}
 			for _, s := range sessions {
-				if projectFilter != "" && !strings.Contains(s.Project, projectFilter) {
-					continue
-				}
 				title := s.Title
 				if title == "" {
 					title = "(untitled)"
@@ -67,6 +69,7 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 		},
 	}
 	listCmd.Flags().StringVar(&projectFilter, "project", "", "only sessions whose project path contains this")
+	listCmd.Flags().BoolVar(&asJSON, "json", false, "print as JSON")
 	cmd.AddCommand(listCmd)
 
 	cmd.AddCommand(&cobra.Command{
@@ -138,25 +141,75 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 	cmd.AddCommand(pushCmd)
 
 	pullCmd := &cobra.Command{
-		Use:   "pull <host> <session-id>",
+		Use:   "pull <host> [session-id]",
 		Short: "Export a session on host over ssh and import it locally",
-		Args:  cobra.ExactArgs(2),
+		Long: `Export a session on host over ssh and import it locally.
+
+With a session id, --project is the local directory to import into.
+Without one, --project is required and selects every session on host whose
+project path contains it; each is imported into the matching local project.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
+			host := args[0]
+			if len(args) == 2 {
+				return pull(a, host, args[1], opts)
+			}
+			if opts.ProjectRoot == "" {
+				return fmt.Errorf("pass a session id or --project <name> to pull a whole project")
+			}
 			var buf bytes.Buffer
-			if err := remote.Spools(args[0], nil, &buf, a.Name(), "export", args[1]); err != nil {
+			if err := remote.Spools(host, nil, &buf, a.Name(), "list", "--json", "--project", opts.ProjectRoot); err != nil {
 				return err
 			}
-			b, err := bundle.Read(&buf)
-			if err != nil {
-				return err
+			var sessions []adapter.Session
+			if err := json.NewDecoder(&buf).Decode(&sessions); err != nil {
+				return fmt.Errorf("reading session list from %s (is spools up to date there?): %w", host, err)
 			}
-			return runImport(a, b, opts)
+			if len(sessions) == 0 {
+				return fmt.Errorf("no %s sessions on %s match %q", a.Name(), host, opts.ProjectRoot)
+			}
+			opts.ProjectRoot = ""
+			for _, s := range sessions {
+				if err := pull(a, host, s.ID, opts); err != nil {
+					return fmt.Errorf("%s: %w", s.ID, err)
+				}
+			}
+			return nil
 		},
 	}
 	addImportFlags(pullCmd)
 	cmd.AddCommand(pullCmd)
 
 	return cmd
+}
+
+func listSessions(a adapter.Adapter, projectFilter string) ([]adapter.Session, error) {
+	sessions, err := a.List()
+	if err != nil {
+		return nil, err
+	}
+	if projectFilter == "" {
+		return sessions, nil
+	}
+	var out []adapter.Session
+	for _, s := range sessions {
+		if strings.Contains(s.Project, projectFilter) {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func pull(a adapter.Adapter, host, id string, opts adapter.ImportOptions) error {
+	var buf bytes.Buffer
+	if err := remote.Spools(host, nil, &buf, a.Name(), "export", id); err != nil {
+		return err
+	}
+	b, err := bundle.Read(&buf)
+	if err != nil {
+		return err
+	}
+	return runImport(a, b, opts)
 }
 
 func runImport(a adapter.Adapter, b *bundle.Bundle, opts adapter.ImportOptions) error {

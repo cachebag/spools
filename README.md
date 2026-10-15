@@ -11,6 +11,7 @@ spools zed import thread.json   # or `-` for stdin
 
 spools claude list --project relay
 spools claude pull <your_machine> <session-id>
+spools claude pull <your_machine> --project relay   # every session for that project
 ```
 
 Supported: `zed` (native agent threads) and `claude` (Claude Code sessions). Importing a claude session also adds it to Zed's sidebar if Zed is installed and not running.

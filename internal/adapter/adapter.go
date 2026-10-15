@@ -12,10 +12,10 @@ import (
 )
 
 type Session struct {
-	ID        string
-	Title     string
-	Project   string // git remote URL if resolvable, else worktree path
-	UpdatedAt time.Time
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Project   string    `json:"project"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type Adapter interface {
