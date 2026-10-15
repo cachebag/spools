@@ -54,14 +54,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api repos/$REPO/pulls/$PR/reviews --paginate \
-            --jq '[.[] | select(.user.login == "mel-the-caddie[bot]" and .state != "COMMENTED")] | last // empty | {commit_id, body}' \
+            --jq '[.[] | select(.user.login == "mel-the-caddie[bot]" and .state != "COMMENTED")] | last // empty | {id, commit_id, body}' \
             > "$RUNNER_TEMP/last.json"
           sha=$(jq -r '.commit_id // empty' "$RUNNER_TEMP/last.json")
           if [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && [ "$sha" != "$(git rev-parse HEAD)" ]; then
-            git diff "$sha" HEAD > "$RUNNER_TEMP/since.diff"
+            git diff "$(git merge-base "$sha" HEAD)" HEAD -- . ':!.github/workflows/review.yml' > "$RUNNER_TEMP/since.diff"
             jq -r .body "$RUNNER_TEMP/last.json" > "$RUNNER_TEMP/last.md"
-            gh api repos/$REPO/pulls/$PR/comments --paginate \
-              --jq '.[] | select(.user.login == "mel-the-caddie[bot]") | "- `\(.path):\(.line // .original_line)` \(.body)"' \
+            review_id=$(jq -r .id "$RUNNER_TEMP/last.json")
+            REVIEW_ID=$review_id gh api repos/$REPO/pulls/$PR/comments --paginate \
+              --jq '.[] | select(.pull_request_review_id == ($ENV.REVIEW_ID | tonumber)) | "- `\(.path):\(.line // .original_line)` \(.body)"' \
               >> "$RUNNER_TEMP/last.md"
             echo "followup=true" >> "$GITHUB_OUTPUT"
           else
