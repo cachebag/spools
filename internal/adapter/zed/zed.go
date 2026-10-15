@@ -3,6 +3,7 @@ package zed
 
 import (
 	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -302,4 +303,70 @@ func (z *Zed) Import(b *bundle.Bundle, opts adapter.ImportOptions) (*adapter.Imp
 		return nil, err
 	}
 	return res, nil
+}
+
+// External is another agent's thread. Zed only keeps a sidebar row for it;
+// the content lives in the agent's own store.
+type External struct {
+	Tool      string // spools adapter name: "claude", "codex"
+	SessionID string
+	Title     string
+	Root      string
+	Created   time.Time
+	Updated   time.Time
+}
+
+var agentIDs = map[string]string{"claude": "claude-acp", "codex": "codex-acp"}
+
+// Register inserts or updates the sidebar row in every channel database.
+// Zed must not be running.
+func (z *Zed) Register(e External) error {
+	agent, ok := agentIDs[e.Tool]
+	if !ok {
+		return fmt.Errorf("zed has no sidebar agent for %q", e.Tool)
+	}
+	dbs, err := filepath.Glob(filepath.Join(z.dir, "db", "*", "db.sqlite"))
+	if err != nil {
+		return err
+	}
+	updated := e.Updated.UTC().Format(zedTime)
+	created := e.Created.UTC().Format(zedTime)
+	if e.Created.IsZero() {
+		created = updated
+	}
+	for _, path := range dbs {
+		db, err := sql.Open("sqlite", "file:"+path+"?mode=rw&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return err
+		}
+		err = registerIn(db, agent, e, created, updated)
+		db.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func registerIn(db *sql.DB, agent string, e External, created, updated string) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'sidebar_threads'`).Scan(&n); err != nil || n == 0 {
+		return err // no sidebar in this db (0-global), nothing to do
+	}
+	var threadID []byte
+	err := db.QueryRow(`SELECT thread_id FROM sidebar_threads WHERE session_id = ? AND agent_id = ?`, e.SessionID, agent).Scan(&threadID)
+	if err == sql.ErrNoRows {
+		threadID = make([]byte, 16)
+		if _, err := rand.Read(threadID); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO sidebar_threads
+		(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order,
+		 archived, main_worktree_paths, main_worktree_paths_order, interacted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, '0', 0, ?, '0', ?)`,
+		threadID, e.SessionID, agent, e.Title, updated, created, e.Root, e.Root, updated)
+	return err
 }
