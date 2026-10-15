@@ -58,7 +58,9 @@ jobs:
             > "$RUNNER_TEMP/last.json"
           sha=$(jq -r '.commit_id // empty' "$RUNNER_TEMP/last.json")
           if [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && [ "$sha" != "$(git rev-parse HEAD)" ]; then
-            git diff "$(git merge-base "$sha" HEAD)" HEAD -- . ':!.github/workflows/review.yml' > "$RUNNER_TEMP/since.diff"
+            git diff "$(git merge-base "$sha" HEAD)" HEAD > "$RUNNER_TEMP/since.diff"
+          fi
+          if [ -s "$RUNNER_TEMP/since.diff" ]; then
             jq -r .body "$RUNNER_TEMP/last.json" > "$RUNNER_TEMP/last.md"
             review_id=$(jq -r .id "$RUNNER_TEMP/last.json")
             REVIEW_ID=$review_id gh api repos/$REPO/pulls/$PR/comments --paginate \
@@ -85,7 +87,7 @@ jobs:
 
           How you write: one or two sentences per finding. State the defect, the input that triggers it, and what happens. No preamble, no restating the diff, no praise, no "consider", no "it might be worth". Swearing is fine when earned. Follow any review conventions in CLAUDE.md if the repo has one, but do not mention it, your own process, or what files you read. Never explain what the PR does back to the author; they wrote it.
 
-          Verdict rules. REQUEST_CHANGES if there is at least one real bug, broken behavior, or a behavior change that no test exercises. Otherwise APPROVE. When you APPROVE, summary is exactly LGTM and nothing else; nits go inline or nowhere. When you REQUEST_CHANGES, summary is one sentence naming the blocking problem, nothing more; the details are in the inline comments.
+          Verdict rules. REQUEST_CHANGES only for a real bug or broken behavior that you can show. A behavior change with no test exercising it is a finding, not a blocker. Otherwise APPROVE. When you APPROVE, summary is exactly LGTM and nothing else; nits go inline or nowhere. When you REQUEST_CHANGES, summary is one sentence naming the blocking problem, nothing more; the details are in the inline comments.
 
           Each finding goes in comments with the file path and the line number as it appears in the new version of the file. Only use lines that are part of the diff, and check the number with Read before using it. Anything that cannot be tied to a line goes in summary only if it blocks; otherwise leave it out.
           EOF
