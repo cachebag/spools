@@ -53,7 +53,7 @@ jobs:
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
-            --output-format text > "$RUNNER_TEMP/review.md"
+            --output-format text > "$RUNNER_TEMP/review.txt"
 
       - name: Post review
         env:
