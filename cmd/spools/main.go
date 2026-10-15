@@ -209,7 +209,10 @@ func runRemove(a adapter.Adapter, z sidebar, id string, out io.Writer) error {
 	if !external {
 		return nil
 	}
-	return z.Unregister(a.Name(), id)
+	if err := z.Unregister(a.Name(), id); err != nil {
+		return fmt.Errorf("session removed, but its zed sidebar row could not be: %w", err)
+	}
+	return nil
 }
 
 func listSessions(a adapter.Adapter, projectFilter string) ([]adapter.Session, error) {

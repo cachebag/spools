@@ -114,6 +114,7 @@ func TestSessionJSONRoundTrip(t *testing.T) {
 
 type fakeSidebar struct {
 	detect, running bool
+	fail            error
 	unregistered    []string
 }
 
@@ -121,7 +122,7 @@ func (s *fakeSidebar) Detect() bool  { return s.detect }
 func (s *fakeSidebar) Running() bool { return s.running }
 func (s *fakeSidebar) Unregister(tool, id string) error {
 	s.unregistered = append(s.unregistered, tool+":"+id)
-	return nil
+	return s.fail
 }
 
 func TestRunRemove(t *testing.T) {
@@ -137,6 +138,7 @@ func TestRunRemove(t *testing.T) {
 		{"zed not installed skips sidebar", "claude", &fakeSidebar{}, "", 1, 0},
 		{"zed quit removes and unregisters", "claude", &fakeSidebar{detect: true}, "", 1, 1},
 		{"zed itself never touches the sidebar", "zed", &fakeSidebar{detect: true, running: true}, "", 1, 0},
+		{"unregister failure says the session is gone", "claude", &fakeSidebar{detect: true, fail: errors.New("locked")}, "session removed, but", 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &fake{name: tc.tool}
