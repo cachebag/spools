@@ -169,17 +169,7 @@ project path contains it; each is imported into the matching local project.`,
 				return fmt.Errorf("no %s sessions on %s match %q", a.Name(), host, opts.ProjectRoot)
 			}
 			opts.ProjectRoot = ""
-			var failed []string
-			for _, s := range sessions {
-				if err := pull(a, host, s.ID, opts); err != nil {
-					fmt.Fprintf(os.Stderr, "%s: %v\n", s.ID, err)
-					failed = append(failed, s.ID)
-				}
-			}
-			if len(failed) > 0 {
-				return fmt.Errorf("%d of %d sessions failed", len(failed), len(sessions))
-			}
-			return nil
+			return pullAll(sessions, os.Stderr, func(id string) error { return pull(a, host, id, opts) })
 		},
 	}
 	addImportFlags(pullCmd)
@@ -194,16 +184,30 @@ func listSessions(a adapter.Adapter, projectFilter string) ([]adapter.Session, e
 	if err != nil {
 		return nil, err
 	}
-	if projectFilter == "" {
-		return sessions, nil
-	}
 	out := []adapter.Session{}
+	if projectFilter == "" {
+		return append(out, sessions...), nil
+	}
 	for _, s := range sessions {
 		if strings.Contains(s.Project, projectFilter) {
 			out = append(out, s)
 		}
 	}
 	return out, nil
+}
+
+func pullAll(sessions []adapter.Session, errOut io.Writer, pull func(id string) error) error {
+	var failed int
+	for _, s := range sessions {
+		if err := pull(s.ID); err != nil {
+			_, _ = fmt.Fprintf(errOut, "%s: %v\n", s.ID, err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d sessions failed", failed, len(sessions))
+	}
+	return nil
 }
 
 func pull(a adapter.Adapter, host, id string, opts adapter.ImportOptions) error {
