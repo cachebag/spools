@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// Version 2 added the _URI path placeholders. Version 1 bundles are a subset
-// and still import fine.
-const Version = 2
+// Version 2 added the _URI path placeholders, 3 added Files. Older bundles
+// are a subset and still import fine.
+const Version = 3
 
 type Bundle struct {
 	Version   int               `json:"version"`
@@ -25,6 +25,15 @@ type Bundle struct {
 	Origin Origin `json:"origin"`
 
 	Payload []byte `json:"payload"`
+
+	// Sidecar data such as Claude's tool-results directory. Paths use forward
+	// slashes and are relative to the session.
+	Files []File `json:"files,omitempty"`
+}
+
+type File struct {
+	Path string `json:"path"`
+	Data []byte `json:"data"`
 }
 
 type Origin struct {
