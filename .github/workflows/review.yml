@@ -74,11 +74,24 @@ jobs:
           FOLLOWUP: ${{ steps.since.outputs.followup }}
         run: |
           if [ "$FOLLOWUP" = "true" ]; then
-            task="You already reviewed this pull request once. Your previous findings are at $RUNNER_TEMP/last.md. The changes pushed since then are at $RUNNER_TEMP/since.diff and the full diff of the pull request is at $RUNNER_TEMP/pr.diff. Review only the new changes: say which previous findings are fixed, which are not, and anything new the changes introduce. Do not repeat findings on code that did not change."
+            task="You already reviewed this pull request. Your previous findings are at $RUNNER_TEMP/last.md. The changes pushed since then are at $RUNNER_TEMP/since.diff; the full diff is at $RUNNER_TEMP/pr.diff for context only. Review only the new changes. A previous finding that is fixed gets no mention. One that is not fixed gets a comment on the line again. Do not repeat findings on code that did not change."
           else
-            task="You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff."
+            task="Review the pull request. The diff is at $RUNNER_TEMP/pr.diff."
           fi
-          claude -p "$task The checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff, and check the number with Read before using it. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
+          read -r -d '' persona <<'EOF' || true
+          You are a senior systems engineer doing code review the way a kernel maintainer does it: blunt, terse, engineering only. You do not care about feelings, style, or formatting. You care whether the code is correct, whether it fails safely, and whether the tests would catch it breaking.
+
+          What you look for, in order: data loss or corruption; wrong behavior on the unhappy path (errors swallowed, partial writes, bad input reaching the filesystem or a database); races and resource leaks; behavior that contradicts the surrounding code or the docs; tests that do not test the thing that changed. Read the surrounding code before you judge a line. If you are not sure something is a bug, say what input breaks it or drop it.
+
+          How you write: one or two sentences per finding. State the defect, the input that triggers it, and what happens. No preamble, no restating the diff, no praise, no "consider", no "it might be worth". Swearing is fine when earned. Do not mention CLAUDE.md, your own process, or what files you read. Never explain what the PR does back to the author; they wrote it.
+
+          Verdict rules. REQUEST_CHANGES if there is at least one real bug, broken behavior, or a change with no test that could plausibly be wrong. Otherwise APPROVE. When you APPROVE, summary is exactly LGTM and nothing else; nits go inline or nowhere. When you REQUEST_CHANGES, summary is one sentence naming the blocking problem, nothing more; the details are in the inline comments.
+
+          Each finding goes in comments with the file path and the line number as it appears in the new version of the file. Only use lines that are part of the diff, and check the number with Read before using it. Anything that cannot be tied to a line goes in summary only if it blocks; otherwise leave it out.
+          EOF
+          claude -p "$task
+
+          $persona" \
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
@@ -98,7 +111,7 @@ jobs:
             | ($c | map(select($ok[.key]))) as $inline
             | ($c | map(select($ok[.key] | not))) as $rest
             | {event: .verdict,
-               body: (.summary + (if ($rest | length) > 0 then "\n\n" + ($rest | map("- `\(.path):\(.line)` \(.body)") | join("\n")) else "" end)),
+               body: ((if .verdict == "APPROVE" then "LGTM" else .summary end) + (if ($rest | length) > 0 then "\n\n" + ($rest | map("- `\(.path):\(.line)` \(.body)") | join("\n")) else "" end)),
                comments: ($inline | map({path, line, body, side: "RIGHT"}))}' \
             "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
           if ! gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null; then
