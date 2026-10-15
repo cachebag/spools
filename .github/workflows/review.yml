@@ -49,24 +49,25 @@ jobs:
 
       - name: Review
         run: |
-          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific, reference files and lines, and skip praise. The very first line of your reply must be exactly one of: VERDICT: APPROVE, VERDICT: REQUEST_CHANGES, or VERDICT: COMMENT. Use REQUEST_CHANGES only for bugs or broken behavior, not style. Put the review after that line." \
+          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES only for bugs or broken behavior, APPROVE if there is nothing blocking, COMMENT otherwise." \
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
-            --output-format text > "$RUNNER_TEMP/review.txt"
+            --output-format json \
+            --json-schema '{"type":"object","required":["verdict","summary","comments"],"properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"summary":{"type":"string"},"comments":{"type":"array","items":{"type":"object","required":["path","line","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"body":{"type":"string"}}}}}}' \
+            | jq '.structured_output // (.result | fromjson)' > "$RUNNER_TEMP/review.json"
 
       - name: Post review
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          verdict=$(head -n1 "$RUNNER_TEMP/review.md" | tr -d '\r')
-          tail -n +2 "$RUNNER_TEMP/review.md" > "$RUNNER_TEMP/body.md"
-          case "$verdict" in
-            "VERDICT: APPROVE")         flag=--approve ;;
-            "VERDICT: REQUEST_CHANGES") flag=--request-changes ;;
-            *)                          flag=--comment ;;
-          esac
-          gh pr review $PR --repo $REPO $flag --body-file "$RUNNER_TEMP/body.md"
+          jq '{event: .verdict, body: .summary, comments: [.comments[] | {path, line, body, side: "RIGHT"}]}' \
+            "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
+          if ! gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null; then
+            jq '{event: .verdict, body: (.summary + "\n\n" + ([.comments[] | "- `\(.path):\(.line)` \(.body)"] | join("\n")))}' \
+              "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
+            gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null
+          fi
 
       - name: Remove the placeholder
         if: success() && steps.ack.outputs.id
