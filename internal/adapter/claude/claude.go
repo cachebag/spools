@@ -275,3 +275,14 @@ func (c *Claude) Import(b *bundle.Bundle, opts adapter.ImportOptions) (*adapter.
 	}
 	return res, nil
 }
+
+func (c *Claude) Remove(id string) error {
+	path, err := c.sessionPath(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return os.RemoveAll(strings.TrimSuffix(path, ".jsonl"))
+}

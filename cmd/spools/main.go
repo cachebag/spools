@@ -114,6 +114,30 @@ func toolCommand(a adapter.Adapter) *cobra.Command {
 	addImportFlags(importCmd)
 	cmd.AddCommand(importCmd)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "rm <session-id>",
+		Short: "Delete a local session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if err := adapter.Remove(a, args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("removed %s\n", args[0])
+			if a.Name() == "zed" {
+				return nil
+			}
+			z := zed.New()
+			if !z.Detect() {
+				return nil
+			}
+			if z.Running() {
+				fmt.Fprintln(os.Stderr, "zed is running; its sidebar still lists this session until you quit zed and remove it again")
+				return nil
+			}
+			return z.Unregister(a.Name(), args[0])
+		},
+	})
+
 	pushCmd := &cobra.Command{
 		Use:   "push <host> <session-id>",
 		Short: "Export a local session and import it on host over ssh",
