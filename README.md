@@ -34,11 +34,11 @@ spools needs nothing beyond working ssh between your machines.
 3. Install spools on both machines, somewhere on the non-interactive `PATH`. Either grab a binary from the [releases page](https://github.com/cachebag/spools/releases):
 
    ```bash
-   curl -L https://github.com/cachebag/spools/releases/latest/download/spools_<version>_<os>_<arch>.tar.gz | tar xz
+   curl -fL https://github.com/cachebag/spools/releases/latest/download/spools_v<version>_<os>_<arch>.tar.gz | tar xz
    sudo install -m 755 spools /usr/local/bin/spools
    ```
 
-   or build it with Go:
+   For example `spools_v0.1.0_linux_amd64.tar.gz`. Or build it with Go:
 
    ```bash
    go install github.com/cachebag/spools/cmd/spools@latest
