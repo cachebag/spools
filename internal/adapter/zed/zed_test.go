@@ -229,3 +229,48 @@ func TestRegister(t *testing.T) {
 		t.Fatal("unknown tool should error")
 	}
 }
+
+func TestRemove(t *testing.T) {
+	z := newStore(t)
+	insert(t, z, "t1", t.TempDir(), `{}`)
+	insert(t, z, "t2", t.TempDir(), `{}`)
+	if err := z.Remove("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := z.Remove("t1"); err == nil {
+		t.Fatal("removing twice should error")
+	}
+	list, err := z.List()
+	if err != nil || len(list) != 1 || list[0].ID != "t2" {
+		t.Fatalf("%v %v", list, err)
+	}
+}
+
+func TestUnregister(t *testing.T) {
+	dir := t.TempDir()
+	workspaceDB(t, dir, "0-stable")
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "db", "0-stable", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE sidebar_threads (thread_id BLOB PRIMARY KEY, session_id TEXT, agent_id TEXT, title TEXT NOT NULL,
+		updated_at TEXT NOT NULL, created_at TEXT, folder_paths TEXT, folder_paths_order TEXT, archived INTEGER DEFAULT 0,
+		main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT, interacted_at TEXT, title_override TEXT) STRICT`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := &Zed{dir: dir}
+	for _, id := range []string{"s1", "s2"} {
+		if err := z.Register(External{Tool: "claude", SessionID: id, Title: id, Root: "/code/x", Updated: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := z.Unregister("claude", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	var left string
+	if err := db.QueryRow(`SELECT session_id FROM sidebar_threads`).Scan(&left); err != nil || left != "s2" {
+		t.Fatalf("%q %v", left, err)
+	}
+}

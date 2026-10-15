@@ -103,3 +103,25 @@ func TestImportNeedsProject(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRemove(t *testing.T) {
+	c := &Claude{dir: t.TempDir()}
+	session(t, c, "s1", "/home/me/relay")
+	session(t, c, "s2", "/home/me/relay")
+	if err := c.Remove("s1"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(c.dir, encodeDir("/home/me/relay"))
+	if _, err := os.Stat(filepath.Join(dir, "s1.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("jsonl still there")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "s1")); !os.IsNotExist(err) {
+		t.Fatal("sidecar dir still there")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "s2.jsonl")); err != nil {
+		t.Fatal("s2 should be untouched")
+	}
+	if err := c.Remove("s1"); err == nil {
+		t.Fatal("removing twice should error")
+	}
+}
