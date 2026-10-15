@@ -37,9 +37,9 @@ func TestEncodeDir(t *testing.T) {
 
 func TestListAndKnownProjects(t *testing.T) {
 	c := &Claude{dir: t.TempDir()}
-	session(t, c, "s1", "/home/me/relay")
-	session(t, c, "s2", "/home/me/relay")
-	session(t, c, "s3", "/home/me/other")
+	session(t, c, "11111111-1111-1111-1111-111111111111", "/home/me/relay")
+	session(t, c, "22222222-2222-2222-2222-222222222222", "/home/me/relay")
+	session(t, c, "33333333-3333-3333-3333-333333333333", "/home/me/other")
 
 	list, err := c.List()
 	if err != nil {
@@ -56,9 +56,9 @@ func TestListAndKnownProjects(t *testing.T) {
 
 func TestRoundTrip(t *testing.T) {
 	src, dst := &Claude{dir: t.TempDir()}, &Claude{dir: t.TempDir()}
-	session(t, src, "s1", "/home/me/relay")
+	session(t, src, "11111111-1111-1111-1111-111111111111", "/home/me/relay")
 
-	b, err := src.Export("s1")
+	b, err := src.Export("11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,14 +77,14 @@ func TestRoundTrip(t *testing.T) {
 	if res.Replaced {
 		t.Fatal("fresh import reported replaced")
 	}
-	got, err := os.ReadFile(filepath.Join(dst.dir, "-Users-me-code-relay", "s1.jsonl"))
+	got, err := os.ReadFile(filepath.Join(dst.dir, "-Users-me-code-relay", "11111111-1111-1111-1111-111111111111.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(got), `"cwd":"`+root+`"`) || strings.Contains(string(got), "/home/me") {
 		t.Fatalf("cwd not rewritten:\n%s", got)
 	}
-	side, err := os.ReadFile(filepath.Join(dst.dir, "-Users-me-code-relay", "s1", "tool-results", "x.txt"))
+	side, err := os.ReadFile(filepath.Join(dst.dir, "-Users-me-code-relay", "11111111-1111-1111-1111-111111111111", "tool-results", "x.txt"))
 	if err != nil || string(side) != "saw "+root+"/a" {
 		t.Fatalf("%q %v", side, err)
 	}
@@ -97,8 +97,8 @@ func TestRoundTrip(t *testing.T) {
 
 func TestImportNeedsProject(t *testing.T) {
 	c := &Claude{dir: t.TempDir()}
-	session(t, c, "s1", "/home/me/relay")
-	b, _ := c.Export("s1")
+	session(t, c, "11111111-1111-1111-1111-111111111111", "/home/me/relay")
+	b, _ := c.Export("11111111-1111-1111-1111-111111111111")
 	if _, err := c.Import(b, adapter.ImportOptions{}); err == nil || !strings.Contains(err.Error(), "--project") {
 		t.Fatal(err)
 	}
@@ -106,22 +106,45 @@ func TestImportNeedsProject(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	c := &Claude{dir: t.TempDir()}
-	session(t, c, "s1", "/home/me/relay")
-	session(t, c, "s2", "/home/me/relay")
-	if err := c.Remove("s1"); err != nil {
+	session(t, c, "11111111-1111-1111-1111-111111111111", "/home/me/relay")
+	session(t, c, "22222222-2222-2222-2222-222222222222", "/home/me/relay")
+	if err := c.Remove("11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(c.dir, encodeDir("/home/me/relay"))
-	if _, err := os.Stat(filepath.Join(dir, "s1.jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "11111111-1111-1111-1111-111111111111.jsonl")); !os.IsNotExist(err) {
 		t.Fatal("jsonl still there")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "s1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "11111111-1111-1111-1111-111111111111")); !os.IsNotExist(err) {
 		t.Fatal("sidecar dir still there")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "s2.jsonl")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "22222222-2222-2222-2222-222222222222.jsonl")); err != nil {
 		t.Fatal("s2 should be untouched")
 	}
-	if err := c.Remove("s1"); err == nil {
+	if err := c.Remove("11111111-1111-1111-1111-111111111111"); err == nil {
 		t.Fatal("removing twice should error")
+	}
+}
+
+func TestSessionPathRejectsBadIDs(t *testing.T) {
+	c := &Claude{dir: t.TempDir()}
+	session(t, c, "11111111-1111-1111-1111-111111111111", "/home/me/relay")
+	for _, id := range []string{"", "*", "../../x", "11111111-1111-1111-1111-111111111111/../x", "not-a-uuid"} {
+		if _, err := c.sessionPath(id); err == nil || !strings.Contains(err.Error(), "invalid session id") {
+			t.Fatalf("%q: got %v", id, err)
+		}
+		if err := c.Remove(id); err == nil {
+			t.Fatalf("%q: remove should fail", id)
+		}
+	}
+}
+
+func TestSessionPathAmbiguous(t *testing.T) {
+	c := &Claude{dir: t.TempDir()}
+	id := "11111111-1111-1111-1111-111111111111"
+	session(t, c, id, "/home/me/relay")
+	session(t, c, id, "/home/me/other")
+	if _, err := c.sessionPath(id); err == nil || !strings.Contains(err.Error(), "more than one project") {
+		t.Fatalf("got %v", err)
 	}
 }

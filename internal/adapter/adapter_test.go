@@ -11,6 +11,7 @@ import (
 type fake struct {
 	detect, running bool
 	got             *ImportOptions
+	removed         string
 }
 
 func (f *fake) Name() string                          { return "fake" }
@@ -18,7 +19,7 @@ func (f *fake) Detect() bool                          { return f.detect }
 func (f *fake) Running() bool                         { return f.running }
 func (f *fake) List() ([]Session, error)              { return nil, nil }
 func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
-func (f *fake) Remove(string) error                   { return nil }
+func (f *fake) Remove(id string) error                { f.removed = id; return nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(b *bundle.Bundle, opts ImportOptions) (*ImportResult, error) {
 	f.got = &opts
@@ -78,5 +79,30 @@ func TestImportDryRunWhileRunning(t *testing.T) {
 	}
 	if f.got == nil || !f.got.DryRun {
 		t.Fatal("dry run should reach the adapter even while running")
+	}
+}
+
+func TestRemoveRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		f    *fake
+		want string
+	}{
+		{"not installed", &fake{}, "not found"},
+		{"running", &fake{detect: true, running: true}, "running"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Remove(tc.f, "t1")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+			if tc.f.removed != "" {
+				t.Fatal("adapter Remove should not have been called")
+			}
+		})
+	}
+	f := &fake{detect: true}
+	if err := Remove(f, "t1"); err != nil || f.removed != "t1" {
+		t.Fatalf("%v %q", err, f.removed)
 	}
 }
