@@ -49,7 +49,7 @@ jobs:
 
       - name: Review
         run: |
-          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
+          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff, and check the number with Read before using it. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
@@ -61,10 +61,19 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          jq '{event: .verdict, body: .summary, comments: [.comments[] | {path, line, body, side: "RIGHT"}]}' \
+          awk '/^\+\+\+ b\//{f=substr($0,7); next} /^@@/{split($0,a," "); split(substr(a[3],2),r,","); n=r[1]-1; next} /^-/{next} /^[ +]/{n++; if(f!="") print f"\t"n}' \
+            "$RUNNER_TEMP/pr.diff" | jq -R -s 'split("\n") | map(select(length > 0)) | map({(.): true}) | add // {}' > "$RUNNER_TEMP/valid.json"
+          jq --slurpfile v "$RUNNER_TEMP/valid.json" '
+            ($v[0]) as $ok
+            | (.comments | map(. + {key: (.path + "\t" + (.line | tostring))})) as $c
+            | ($c | map(select($ok[.key]))) as $inline
+            | ($c | map(select($ok[.key] | not))) as $rest
+            | {event: .verdict,
+               body: (.summary + (if ($rest | length) > 0 then "\n\n" + ($rest | map("- `\(.path):\(.line)` \(.body)") | join("\n")) else "" end)),
+               comments: ($inline | map({path, line, body, side: "RIGHT"}))}' \
             "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
           if ! gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null; then
-            jq '{event: .verdict, body: (.summary + "\n\n" + ([.comments[] | "- `\(.path):\(.line)` \(.body)"] | join("\n")))}' \
+            jq '{event: .verdict, body: (.summary + "\n\n" + (.comments | map("- `\(.path):\(.line)` \(.body)") | join("\n")))}' \
               "$RUNNER_TEMP/review.json" > "$RUNNER_TEMP/payload.json"
             gh api -X POST repos/$REPO/pulls/$PR/reviews --input "$RUNNER_TEMP/payload.json" > /dev/null
           fi
