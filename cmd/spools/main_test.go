@@ -19,6 +19,7 @@ func (f *fake) Detect() bool                          { return true }
 func (f *fake) Running() bool                         { return false }
 func (f *fake) List() ([]adapter.Session, error)      { return f.sessions, nil }
 func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
+func (f *fake) Remove(string) error                   { return nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(*bundle.Bundle, adapter.ImportOptions) (*adapter.ImportResult, error) {
 	return nil, nil

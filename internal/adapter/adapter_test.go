@@ -18,6 +18,7 @@ func (f *fake) Detect() bool                          { return f.detect }
 func (f *fake) Running() bool                         { return f.running }
 func (f *fake) List() ([]Session, error)              { return nil, nil }
 func (f *fake) KnownProjects() ([]string, error)      { return nil, nil }
+func (f *fake) Remove(string) error                   { return nil }
 func (f *fake) Export(string) (*bundle.Bundle, error) { return nil, nil }
 func (f *fake) Import(b *bundle.Bundle, opts ImportOptions) (*ImportResult, error) {
 	f.got = &opts

@@ -37,6 +37,10 @@ type Adapter interface {
 	// level Import, so opts.ProjectRoot is already resolved and the tool is
 	// known to be installed and not running.
 	Import(b *bundle.Bundle, opts ImportOptions) (*ImportResult, error)
+
+	// Remove deletes a session from the local store. Callers go through the
+	// package level Remove, which checks the tool is installed and not running.
+	Remove(id string) error
 }
 
 type ImportOptions struct {
@@ -76,4 +80,14 @@ func Import(a Adapter, b *bundle.Bundle, opts ImportOptions) (*ImportResult, err
 	}
 	opts.ProjectRoot = root
 	return a.Import(b, opts)
+}
+
+func Remove(a Adapter, id string) error {
+	if !a.Detect() {
+		return fmt.Errorf("%s not found on this machine", a.Name())
+	}
+	if a.Running() {
+		return fmt.Errorf("%s is running on this machine; quit it before removing", a.Name())
+	}
+	return a.Remove(id)
 }

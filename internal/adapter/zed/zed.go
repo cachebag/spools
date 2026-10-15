@@ -370,3 +370,47 @@ func registerIn(db *sql.DB, agent string, e External, created, updated string) e
 		threadID, e.SessionID, agent, e.Title, updated, created, e.Root, e.Root, updated)
 	return err
 }
+
+func (z *Zed) Remove(id string) error {
+	db, err := sql.Open("sqlite", "file:"+z.dbPath+"?mode=rw&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	res, err := db.Exec(`DELETE FROM threads WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("thread %s not found", id)
+	}
+	return nil
+}
+
+// Unregister removes an external thread's sidebar row from every channel
+// database. Zed must not be running.
+func (z *Zed) Unregister(tool, sessionID string) error {
+	agent, ok := agentIDs[tool]
+	if !ok {
+		return fmt.Errorf("zed has no sidebar agent for %q", tool)
+	}
+	dbs, err := filepath.Glob(filepath.Join(z.dir, "db", "*", "db.sqlite"))
+	if err != nil {
+		return err
+	}
+	for _, path := range dbs {
+		db, err := sql.Open("sqlite", "file:"+path+"?mode=rw&_pragma=busy_timeout(5000)")
+		if err != nil {
+			return err
+		}
+		var n int
+		if db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'sidebar_threads'`).Scan(&n) == nil && n > 0 {
+			_, err = db.Exec(`DELETE FROM sidebar_threads WHERE session_id = ? AND agent_id = ?`, sessionID, agent)
+		}
+		db.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return nil
+}
