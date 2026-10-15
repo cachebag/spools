@@ -49,12 +49,12 @@ jobs:
 
       - name: Review
         run: |
-          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES only for bugs or broken behavior, APPROVE if there is nothing blocking, COMMENT otherwise." \
+          claude -p "You are reviewing a pull request. The diff is at $RUNNER_TEMP/pr.diff and the checked-out code is in the current directory. Follow any review conventions in CLAUDE.md. Point out bugs, missing tests, and anything that contradicts the code around it. Be brief and specific and skip praise. Each finding goes in comments with the file path and the line number as it appears in the new version of the file; only use lines that are part of the diff. Put anything that does not fit a specific line in summary. verdict is REQUEST_CHANGES if there is a bug or broken behavior, otherwise APPROVE." \
             --allowedTools "Read,Grep,Glob" \
             --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch" \
             --max-turns 30 \
             --output-format json \
-            --json-schema '{"type":"object","required":["verdict","summary","comments"],"properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"summary":{"type":"string"},"comments":{"type":"array","items":{"type":"object","required":["path","line","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"body":{"type":"string"}}}}}}' \
+            --json-schema '{"type":"object","required":["verdict","summary","comments"],"properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES"]},"summary":{"type":"string"},"comments":{"type":"array","items":{"type":"object","required":["path","line","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"body":{"type":"string"}}}}}}' \
             | jq '.structured_output // (.result | fromjson)' > "$RUNNER_TEMP/review.json"
 
       - name: Post review
