@@ -18,12 +18,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-<<<<<<< HEAD
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
-||||||| parent of 7de12b1 (ci: placeholder comment while mel reviews)
-=======
-      PR: ${{ github.event.issue.number }}
->>>>>>> 7de12b1 (ci: placeholder comment while mel reviews)
       REPO: ${{ github.repository }}
     steps:
       - name: App token
