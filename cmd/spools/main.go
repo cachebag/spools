@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -17,14 +18,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Set by the release build with -ldflags "-X main.version=...".
+// Set by the release build with -ldflags "-X main.version=...". A go install
+// build gets the module version from the build info instead.
 var version = "dev"
+
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
 
 func main() {
 	root := &cobra.Command{
 		Use:     "spools",
 		Short:   "Move agent threads/sessions between machines",
-		Version: version,
+		Version: buildVersion(),
 
 		SilenceUsage:  true,
 		SilenceErrors: true,
